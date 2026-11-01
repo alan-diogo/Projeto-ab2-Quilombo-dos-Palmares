@@ -57,7 +57,7 @@ Ao completar tudo aparece "Missão cumprida" com o tempo gasto.
 | **P** | Projeção perspectiva ↔ ortográfica (vista de mapa) |
 | **ESC** | Sair |
 
-## Objetos modelados (todos pela equipe, com primitivas — nenhum modelo importado)
+## Objetos modelados com primitivas
 
 1. Chão (grama + praça de terra) e morros ao longe
 2. Paliçada (muro de ~550 varas em círculo + travessas)
