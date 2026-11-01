@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+demo_*.png
+teste_*.png
+*.mp4
