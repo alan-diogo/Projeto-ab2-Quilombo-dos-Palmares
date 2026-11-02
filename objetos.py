@@ -114,6 +114,52 @@ def _folha(largura):
     glPopMatrix()
 
 
+def placa():
+    """Placa de entrada em cima do portão: \"QUILOMBO DOS PALMARES\".
+    Dois postes sobem dos pilares do portão e seguram uma tábua. A frente da tábua
+    é um quadrilátero com a textura placa.jpg (letras entalhadas na madeira)."""
+    z = RAIO_MURO
+    larg, alt, esp = 5.6, 0.95, 0.14
+    y0 = 3.75
+    mat_madeira()
+    usar_textura("casca", 1, 2)
+    for x in (-(larg / 2 + 0.1), larg / 2 + 0.1):   # dois postes do chão até o telhadinho
+        glPushMatrix()
+        glTranslatef(x, 0, z + 0.3)
+        cilindro(0.15, 0.13, y0 + alt + 0.05, 10)
+        glPopMatrix()
+    glPushMatrix()                                   # tábua (caixa de madeira)
+    glTranslatef(0, y0, z + 0.3)
+    usar_textura("madeira", 2, 1)
+    caixa(larg, alt, esp)
+    glPopMatrix()
+    # frente (+Z, quem chega de fora) e verso (-Z, quem está dentro): mesma imagem;
+    # no verso o u vai de 1 a 0 para o texto não aparecer espelhado
+    material((1.0, 0.95, 0.9), (0.15, 0.12, 0.1), 10)
+    usar_textura("placa")
+    x, y1, y2 = larg / 2 - 0.08, y0 + 0.06, y0 + alt - 0.06
+    zf, zt = z + 0.3 + esp / 2 + 0.005, z + 0.3 - esp / 2 - 0.005
+    glBegin(GL_QUADS)
+    glNormal3f(0, 0, 1)
+    glTexCoord2f(0, 0); glVertex3f(-x, y1, zf)
+    glTexCoord2f(1, 0); glVertex3f(x, y1, zf)
+    glTexCoord2f(1, 1); glVertex3f(x, y2, zf)
+    glTexCoord2f(0, 1); glVertex3f(-x, y2, zf)
+    glNormal3f(0, 0, -1)
+    glTexCoord2f(0, 0); glVertex3f(x, y1, zt)
+    glTexCoord2f(1, 0); glVertex3f(-x, y1, zt)
+    glTexCoord2f(1, 1); glVertex3f(-x, y2, zt)
+    glTexCoord2f(0, 1); glVertex3f(x, y2, zt)
+    glEnd()
+    # telhadinho de proteção
+    mat_palha()
+    usar_textura("palha", 3, 1)
+    glPushMatrix()
+    glTranslatef(0, y0 + alt + 0.02, z + 0.3)
+    caixa(larg + 0.8, 0.12, 0.8)
+    glPopMatrix()
+
+
 def portao(angulo):
     """angulo: 0 = fechado, 100 = aberto (graus). Abre para dentro do quilombo (-Z)."""
     z = RAIO_MURO
@@ -315,30 +361,95 @@ def arvore():
 # ---------------------------------------------------------------------
 # 8. COQUEIRO — tronco alto + folhas (caixas finas) giradas em volta do topo
 # ---------------------------------------------------------------------
+def _fronde(comp, elev, queda, verde):
+    """Uma folha de coqueiro (fronde). Ela nasce no topo e aponta para +Z.
+    O TALO é uma curva: sobe com ângulo `elev` e vai caindo (parábola, como um galho pesado):
+        z(s) = s·cos(elev)        y(s) = s·sen(elev) − queda·s²
+    De cada ponto do talo saem dois FOLÍOLOS (as tirinhas), um pra cada lado, inclinados pra baixo.
+    Cada folíolo é um quadrilátero fino desenhado vértice a vértice."""
+    n = 22
+    ce, se = math.cos(elev), math.sin(elev)
+    material(verde, (0.08, 0.1, 0.05), 8)
+    glBegin(GL_QUADS)
+    for k in range(2, n):
+        s = comp * k / n
+        z, y = s * ce, s * se - queda * s * s
+        dz = ce                                             # derivada da curva: direção do talo
+        dy = se - 2 * queda * s
+        m = math.hypot(dz, dy)
+        dz, dy = dz / m, dy / m
+        frac = k / n
+        tam = 0.95 * math.sin(math.pi * min(1.0, frac * 1.15)) + 0.12   # folíolos maiores no meio
+        larg = 0.07
+        for lado in (-1, 1):
+            # ponta do folíolo: para o lado (x), um pouco pra frente e caindo
+            px = lado * tam * 0.85
+            py = y - tam * 0.45
+            pz = z + tam * 0.35
+            glNormal3f(0, 1, 0.2)
+            glTexCoord2f(0, 0); glVertex3f(0, y, z)
+            glTexCoord2f(1, 0); glVertex3f(0, y + dy * larg, z + dz * larg)
+            glTexCoord2f(1, 1); glVertex3f(px, py + dy * larg * 0.5, pz + dz * larg * 0.5)
+            glTexCoord2f(0, 1); glVertex3f(px, py, pz)
+    glEnd()
+    # o talo (nervura central): fileira de quadradinhos finos
+    material((0.45, 0.42, 0.2))
+    glBegin(GL_QUAD_STRIP)
+    for k in range(n + 1):
+        s = comp * k / n
+        z, y = s * ce, s * se - queda * s * s
+        w = 0.05 * (1 - k / n) + 0.01
+        glNormal3f(0, 1, 0)
+        glVertex3f(-w, y, z)
+        glVertex3f(w, y, z)
+    glEnd()
+
+
 def coqueiro():
-    h = 7.0
+    """Coqueiro: tronco CURVO + copa de frondes + cachos de coco.
+    O tronco é feito de 12 pedaços de cilindro. Depois de cada pedaço: TRANSLAÇÃO até o topo dele
+    e uma ROTAÇÃO pequena (3°). As rotações se ACUMULAM na matriz, então o tronco vai entortando
+    aos poucos, como um coqueiro de verdade. A copa é desenhada já nesse sistema entortado."""
+    segs, h_seg = 12, 0.62
     mat_madeira()
-    usar_textura("casca", 1, 4)
-    cilindro(0.22, 0.14, h, 8)
-    mat_folhas()
-    usar_textura("folhas", 1, 2)
-    for k in range(7):
+    usar_textura("casca", 1, 1)
+    glPushMatrix()
+    for k in range(segs):
+        r0 = 0.24 - 0.09 * k / segs
+        r1 = 0.24 - 0.09 * (k + 1) / segs
+        cilindro(r0 * 1.12, r1, h_seg, 10, tampa=False)      # base um pouco mais larga: "anéis" no tronco
+        glTranslatef(0, h_seg, 0)                             # TRANSLAÇÃO até o topo do pedaço
+        glRotatef(3.0, 1, 0, 0)                               # ROTAÇÃO acumulada: o tronco curva
+    # topo do tronco (onde nascem as folhas)
+    material((0.45, 0.38, 0.2))
+    esfera(0.2, 10)
+    usar_textura("folhas", 1, 1)
+    # frondes: 12 em volta; as de cima mais em pé, as de baixo caídas; 2 secas, marrons, penduradas
+    for k in range(12):
         glPushMatrix()
-        glTranslatef(0, h, 0)
-        glRotatef(360 * k / 7, 0, 1, 0)      # ROTAÇÃO 1: direção da folha (em volta do tronco)
-        glRotatef(30, 1, 0, 0)               # ROTAÇÃO 2: inclina pra baixo (composta com a 1ª)
-        glTranslatef(0, 0, 1.3)
-        caixa(0.5, 0.04, 2.6)
+        glRotatef(360 * k / 12 + (k % 3) * 9, 0, 1, 0)       # ROTAÇÃO em Y: direção da folha
+        alta = k % 2 == 0
+        elev = math.radians(48 if alta else 22)
+        queda = 0.11 if alta else 0.16
+        verde = (0.42, 0.62, 0.22) if alta else (0.36, 0.55, 0.2)
+        _fronde(3.2 if alta else 3.6, elev, queda, verde)
         glPopMatrix()
-    # cocos
+    for ang in (70, 250):
+        glPushMatrix()
+        glRotatef(ang, 0, 1, 0)
+        _fronde(2.6, math.radians(-50), 0.02, (0.55, 0.42, 0.22))   # folhas secas, caídas
+        glPopMatrix()
+    # cachos de coco embaixo da copa
     usar_textura(None)
-    material((0.35, 0.25, 0.1))
-    for k in range(3):
-        a = 2 * math.pi * k / 3
+    material((0.38, 0.3, 0.1), (0.15, 0.15, 0.1), 20)
+    for k in range(5):
+        a = 2 * math.pi * k / 5 + 0.4
         glPushMatrix()
-        glTranslatef(math.cos(a) * 0.25, h - 0.3, math.sin(a) * 0.25)
-        esfera(0.18, 8)
+        glTranslatef(math.cos(a) * 0.26, -0.3 - (k % 2) * 0.12, math.sin(a) * 0.26)
+        glScalef(1, 1.15, 1)                                  # ESCALA: coco um pouco oval
+        esfera(0.15, 10)
         glPopMatrix()
+    glPopMatrix()
 
 
 # ---------------------------------------------------------------------
@@ -657,6 +768,50 @@ def lagoa_margem():
         glScalef(1, 0.55, 1)
         esfera(0.35, 8)
         glPopMatrix()
+
+
+def abobada_celeste(dia, cor_horizonte, giro_u=0.0, raio=300.0):
+    """CÉU: meia esfera ENORME em volta da câmera, com a foto do céu colada POR DENTRO (sky dome).
+    A foto é equiretangular (panorâmica 360°): u = ângulo em volta (azimute), v = altura (elevação).
+    De dia usa ceu_dia.jpg; de noite a ceu_noite.jpg vai aparecendo por cima (transparência = 1 - dia).
+    Sem luz, sem neblina e sem gravar profundidade: fica sempre "no fundo", atrás de tudo."""
+    fatias, aneis = 48, 16
+    el_min = -0.15                                   # desce um pouco abaixo do horizonte (sem buraco)
+
+    def cupula(nome, r, g, b, a):
+        usar_textura(nome)
+        glColor4f(r, g, b, a)
+        for j in range(aneis):
+            glBegin(GL_QUAD_STRIP)
+            for i in range(fatias + 1):
+                az = 2 * math.pi * i / fatias
+                for jj in (j + 1, j):
+                    el = el_min + (math.pi / 2 - el_min) * jj / aneis
+                    glTexCoord2f(i / fatias + giro_u, max(0.0, el) / (math.pi / 2))   # (u, v) da foto
+                    glVertex3f(raio * math.cos(el) * math.cos(az), raio * math.sin(el),
+                               raio * math.cos(el) * math.sin(az))
+            glEnd()
+
+    claro = 0.35 + 0.65 * dia
+    cupula("ceu_dia", claro, claro, claro, 1.0)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    if dia < 0.99:
+        cupula("ceu_noite", 1, 1, 1, 1.0 - dia)
+    # faixa do horizonte: cor da neblina, opaca embaixo e sumindo pra cima (junta céu e chão sem emenda)
+    glDisable(GL_TEXTURE_2D)
+    c = cor_horizonte
+    for el_a, al_a, el_b, al_b in ((el_min, 1.0, 0.02, 0.9), (0.02, 0.9, 0.28, 0.0)):
+        glBegin(GL_QUAD_STRIP)
+        for i in range(fatias + 1):
+            az = 2 * math.pi * i / fatias
+            for el, al in ((el_b, al_b), (el_a, al_a)):
+                glColor4f(c[0], c[1], c[2], al)
+                glVertex3f(raio * 0.98 * math.cos(el) * math.cos(az), raio * 0.98 * math.sin(el),
+                           raio * 0.98 * math.cos(el) * math.sin(az))
+        glEnd()
+    glDisable(GL_BLEND)
+    glColor4f(1, 1, 1, 1)
 
 
 def agua(t):

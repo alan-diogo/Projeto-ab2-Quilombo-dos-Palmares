@@ -20,7 +20,8 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 
 import objetos as obj
-from primitivas import textura
+from historias import HISTORIAS
+from primitivas import textura, PASTA
 
 LARGURA, ALTURA = 1280, 720
 ALTURA_OLHOS = 1.7
@@ -63,6 +64,10 @@ CASAS = [(MUXIMA[0], MUXIMA[1], 4.0, 0.0, 0.17)]
 CASAS += [(x, z, obj.OCA_RAIO, None, obj.OCA_MEIA_PORTA - 0.08) for x, z in OCAS]
 OBSTACULOS += [(x, z, 0.6) for x, z in ARVORES + COQUEIROS]
 OBSTACULOS += [(CASA_FARINHA[0] - 1.5 * 0.7, CASA_FARINHA[1] - 0.5, 1.4)]   # forno (aprox.)
+
+
+# a parte mais clara da foto do céu (u = 0,70) fica na direção do sol (azimute atan2(0.35, 0.45))
+GIRO_CEU = 0.70 - math.atan2(0.35, 0.45) / (2 * math.pi)
 
 
 def pode_ficar(x, z, portao_aberto):
@@ -176,6 +181,94 @@ def texto(x, y, s, fonte, cor=(255, 255, 255)):
     glDrawPixels(w, h, GL_RGBA, GL_UNSIGNED_BYTE, dados)
 
 
+_cache_painel = {}
+
+
+def quebrar_linhas(s, fonte, largura):
+    """Quebra o texto em linhas que cabem na largura (em pixels), palavra por palavra."""
+    linhas, atual = [], ""
+    for palavra in s.split():
+        teste = (atual + " " + palavra).strip()
+        if fonte.getlength(teste) <= largura:
+            atual = teste
+        else:
+            linhas.append(atual)
+            atual = palavra
+    linhas.append(atual)
+    return linhas
+
+
+def painel_historia(i, fonte_titulo, fonte):
+    """Monta (uma vez só) a imagem do painel da história i: caixa escura, título e texto."""
+    if i not in _cache_painel:
+        titulo, corpo = HISTORIAS[i][0], HISTORIAS[i][1]
+        tipo = HISTORIAS[i][2]                                              # História, Lenda ou Folclore
+        W = 760
+        linhas = quebrar_linhas(corpo, fonte, W - 60)
+        H = 110 + len(linhas) * 26
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([0, 0, W - 1, H - 1], radius=14, fill=(20, 12, 6, 215), outline=(230, 170, 80, 255), width=2)
+        cor_titulo = (255, 210, 120, 255) if tipo == "História" else (170, 210, 255, 255)
+        d.text((30, 18), tipo + "  ·  " + titulo, font=fonte_titulo, fill=cor_titulo)
+        for k, s in enumerate(linhas):
+            d.text((30, 58 + k * 26), s, font=fonte, fill=(245, 235, 215, 255))
+        rodape = "H: próxima história   (%d/%d)" % (i + 1, len(HISTORIAS)) if i + 1 < len(HISTORIAS) \
+            else "H: fechar   (%d/%d)" % (i + 1, len(HISTORIAS))
+        d.text((30, H - 36), rodape, font=fonte, fill=(200, 180, 140, 255))
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        _cache_painel[i] = (img.tobytes(), W, H)
+    return _cache_painel[i]
+
+
+_ilustracoes = {}
+
+
+def ilustracao(nome):
+    """Carrega a ilustração de uma história como TEXTURA (sem mipmap, no tamanho original,
+    pra o texto desenhado nela ficar nítido). Devolve (id, largura, altura)."""
+    if nome not in _ilustracoes:
+        img = Image.open("%s/texturas/%s.jpg" % (PASTA, nome)).convert("RGB").transpose(Image.FLIP_TOP_BOTTOM)
+        tid = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, tid)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, img.width, img.height, 0, GL_RGB, GL_UNSIGNED_BYTE, img.tobytes())
+        _ilustracoes[nome] = (tid, img.width, img.height)
+    return _ilustracoes[nome]
+
+
+def desenhar_ilustracao(nome):
+    """Escurece a tela e desenha a ilustração num retângulo com textura (projeção ortográfica em pixels)."""
+    tid, w, h = ilustracao(nome)
+    larg = LARGURA - 100
+    alt = larg * h / w
+    x0, y0 = (LARGURA - larg) / 2, (ALTURA - alt) / 2 + 12
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+    glOrtho(0, LARGURA, 0, ALTURA, -1, 1)               # 1 unidade = 1 pixel
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+    glMatrixMode(GL_TEXTURE); glLoadIdentity(); glMatrixMode(GL_MODELVIEW)
+    glDisable(GL_TEXTURE_2D)
+    glColor4f(0, 0, 0, 0.65)                            # véu escuro sobre o jogo
+    glBegin(GL_QUADS)
+    glVertex2f(0, 0); glVertex2f(LARGURA, 0); glVertex2f(LARGURA, ALTURA); glVertex2f(0, ALTURA)
+    glEnd()
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, tid)
+    glColor4f(1, 1, 1, 1)
+    glBegin(GL_QUADS)
+    glTexCoord2f(0, 0); glVertex2f(x0, y0)
+    glTexCoord2f(1, 0); glVertex2f(x0 + larg, y0)
+    glTexCoord2f(1, 1); glVertex2f(x0 + larg, y0 + alt)
+    glTexCoord2f(0, 1); glVertex2f(x0, y0 + alt)
+    glEnd()
+    glDisable(GL_TEXTURE_2D)
+    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
+
+
 # ---------------------------------------------------------------------
 # PROGRAMA
 # ---------------------------------------------------------------------
@@ -225,6 +318,7 @@ def compilar_cena():
         desenho()
         glPopMatrix()
 
+    obj.placa()                     # placa de entrada, já na posição do portão
     colocar(MUXIMA, obj.muxima, giro=0)
     for p in OCAS:
         colocar(p, obj.oca)
@@ -364,6 +458,8 @@ def main():
     #   em_cima_vazio → descendo → enchendo → subindo → em_cima_cheio → despejando → em_cima_vazio
     poco_estado, balde_h, balde_cheio, balde_incl, poco_tempo = "em_cima_vazio", 1.0, False, 0.0, 0.0
     ondas, gotas = [], []
+    historia = None                            # índice da história aberta (None = fechada)
+    proxima_historia = 0
     subida, subida_alvo = 0.0, 0.0             # E na escada da atalaia (0 = embaixo, 1 = em cima)
     giro_atalaia = virado_pro_centro(*ATALAIA)
     pe_escada = local_para_mundo(ATALAIA, giro_atalaia, *obj.ATALAIA_PE)
@@ -393,6 +489,12 @@ def main():
         dict(x=0, z=-7.5, yaw=0, pitch=0.05, portao=100),
         dict(x=12.5, z=-11.5, yaw=math.radians(40), pitch=0.25, portao=100),
         dict(x=16, z=-16, yaw=math.radians(-140), pitch=-0.3, portao=100, fogo=1, altura=7.7),
+        dict(x=0, z=31, yaw=0, pitch=0.3),
+        dict(x=0, z=19, yaw=math.pi, pitch=0.25, portao=100),
+        dict(x=5, z=30, yaw=math.radians(-35), pitch=0.2),
+        dict(x=0, z=28, yaw=0, pitch=0.35, portao=100),
+        dict(x=-17, z=13.5, yaw=0, pitch=0.3, portao=100),
+        dict(x=4, z=11, yaw=0, pitch=-0.1, portao=100, fogo=1, dia=0, historia=7),
         dict(orto=True, portao=100),
     ]
     quadro = 0
@@ -405,6 +507,10 @@ def main():
         perto_portao = math.hypot(cam.x, cam.z - obj.RAIO_MURO) < 7
         perto_fogo = math.hypot(cam.x - FOGUEIRA[0], cam.z - FOGUEIRA[1]) < 6
         perto_poco = math.hypot(cam.x - POCO[0], cam.z - POCO[1]) < 4
+        # roda de histórias: perto da fogueira acesa, de noite
+        na_roda = perto_fogo and fogo_alvo > 0 and dia_alvo < 0.5 and not cam.orto
+        if not na_roda:
+            historia = None
         perto_escada = math.hypot(cam.x - pe_escada[0], cam.z - pe_escada[1]) < 2.5 or subida_alvo > 0
 
         glfw.poll_events()
@@ -421,6 +527,14 @@ def main():
                     portao_alvo = 0.0 if portao_alvo > 0 else 100.0        # abre/fecha o portão
                 if tecla == glfw.KEY_L and perto_fogo:
                     fogo_alvo = 0.0 if fogo_alvo > 0 else 1.0              # acende/apaga a fogueira
+                if tecla == glfw.KEY_H and na_roda:                        # histórias da fogueira
+                    if historia is None:
+                        historia = proxima_historia
+                    elif historia + 1 < len(HISTORIAS):
+                        historia += 1
+                    else:
+                        historia = None                                    # acabou: fecha
+                    proxima_historia = 0 if historia is None else (historia + 1) % len(HISTORIAS)
                 if tecla == glfw.KEY_F and perto_poco:
                     if poco_estado == "em_cima_vazio":
                         poco_estado = "descendo"                           # solta o balde
@@ -468,6 +582,7 @@ def main():
             angulo_portao = portao_alvo = q.get("portao", 0)
             fogo = fogo_alvo = q.get("fogo", 0)
             dia = dia_alvo = q.get("dia", 1)
+            historia = q.get("historia")
             if q.get("balde"):
                 poco_estado, balde_h, balde_cheio = "em_cima_cheio", 1.0, True
             if "altura" in q:
@@ -543,7 +658,7 @@ def main():
             tempo_fim = t
 
         # ---------- céu, neblina e luzes dependem do "dia" ----------
-        ceu = lerp3((0.03, 0.04, 0.10), (0.62, 0.78, 0.95), dia)
+        ceu = lerp3((0.04, 0.05, 0.09), (0.66, 0.72, 0.80), dia)   # cor do horizonte (neblina)
         glClearColor(ceu[0], ceu[1], ceu[2], 1)
         glFogfv(GL_FOG_COLOR, ceu + [1])
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
@@ -577,6 +692,12 @@ def main():
         glDisable(GL_LIGHTING)
         glDisable(GL_TEXTURE_2D)
         glDepthMask(GL_FALSE)
+        # céu com foto (sky dome), centrado na câmera e girado pra claridade da foto ficar do lado do sol
+        glPushMatrix()
+        glTranslatef(cam.x, 0, cam.z)
+        obj.abobada_celeste(dia, ceu, GIRO_CEU)
+        glPopMatrix()
+        glDisable(GL_TEXTURE_2D)
         if dia < 0.9:
             glEnable(GL_BLEND)
             glPointSize(2)
@@ -586,12 +707,15 @@ def main():
                 glVertex3f(cam.x + e[0], e[1], cam.z + e[2])
             glEnd()
             glDisable(GL_BLEND)
-        glPushMatrix()
-        n = math.sqrt(sum(c * c for c in sol_dir))
-        glTranslatef(cam.x + sol_dir[0] / n * 200, sol_dir[1] / n * 200, cam.z + sol_dir[2] / n * 200)
-        glColor3f(*lerp3((0.85, 0.88, 0.95), (1.0, 0.95, 0.75), dia))   # lua de noite, sol de dia
-        obj.esfera(lerp(6, 9, dia), 16)
-        glPopMatrix()
+        if dia < 0.6:                    # lua (de dia o sol já está na foto do céu)
+            glPushMatrix()
+            n = math.sqrt(sum(c * c for c in sol_dir))
+            glTranslatef(cam.x + sol_dir[0] / n * 200, sol_dir[1] / n * 200, cam.z + sol_dir[2] / n * 200)
+            glEnable(GL_BLEND)
+            glColor4f(0.88, 0.9, 0.97, min(1.0, (0.6 - dia) * 3))
+            obj.esfera(6, 16)
+            glDisable(GL_BLEND)
+            glPopMatrix()
         glColor3f(1, 1, 1)
         glDepthMask(GL_TRUE)
         glEnable(GL_LIGHTING)
@@ -651,7 +775,7 @@ def main():
         glEnable(GL_BLEND)
         texto(16, 14, "Quilombo dos Palmares", fonte_grande, (255, 225, 140))
         linhas = ["WASD andar | Shift correr | Mouse olhar | Roda zoom",
-                  "E portão | F poço | L fogueira | N dia/noite | P projeção | ESC sair",
+                  "E portão | F poço | L fogueira | H história | N dia/noite | P projeção | ESC sair",
                   "Projeção: %s   %s" % ("ORTOGRÁFICA (tamanho %d m)" % cam.tam_orto if cam.orto
                                           else "PERSPECTIVA (fov %d°)" % cam.fov,
                                           "Noite" if dia_alvo < 0.5 else "Dia")]
@@ -660,8 +784,12 @@ def main():
         aviso = ""
         if perto_portao and not cam.orto:
             aviso = "Aperte E para %s o portão" % ("fechar" if portao_alvo > 0 else "abrir")
+        elif na_roda:
+            aviso = "" if historia is not None else "Aperte H para ouvir uma história  |  L apaga"
         elif perto_fogo and not cam.orto:
             aviso = "Aperte L para %s a fogueira" % ("apagar" if fogo_alvo > 0 else "acender")
+            if dia_alvo > 0.5:
+                aviso += "  (à noite tem história!)"
         elif perto_escada and not cam.orto:
             aviso = ("Atalaia: vigiando o quilombo  |  E para descer" if subida_alvo > 0
                      else "Aperte E para subir na atalaia")
@@ -671,7 +799,7 @@ def main():
                      "subindo": "Puxando o balde...", "em_cima_cheio": "Balde cheio! F para despejar",
                      "despejando": "Despejando..."}[poco_estado]
         if aviso:
-            texto(LARGURA // 2 - 150, ALTURA - 90, aviso, fonte_grande, (255, 240, 180))
+            texto(LARGURA // 2 - fonte_grande.getlength(aviso) // 2, ALTURA - 90, aviso, fonte_grande, (255, 240, 180))
         # lista de tarefas (canto direito)
         texto(LARGURA - 400, 14, "Um dia no Quilombo", fonte_grande, (255, 225, 140))
         for k, s in enumerate(tarefas):
@@ -686,6 +814,17 @@ def main():
             texto(LARGURA // 2 - 190, ALTURA // 2 - 60,
                   "Missão cumprida em %d min %02d s!" % (tempo_fim // 60, tempo_fim % 60),
                   fonte_grande, (150, 240, 150))
+        if historia is not None:
+            imagem = HISTORIAS[historia][3]
+            if imagem:                                   # história ilustrada: a imagem já tem o texto
+                desenhar_ilustracao(imagem)
+                n = len(HISTORIAS)
+                rodape = ("H: próxima   (%d/%d)" if historia + 1 < n else "H: fechar   (%d/%d)") % (historia + 1, n)
+                texto(LARGURA // 2 - fonte.getlength(rodape) // 2, ALTURA - 30, rodape, fonte, (255, 225, 160))
+            else:                                        # sem ilustração: painel de texto
+                dados, w, h = painel_historia(historia, fonte_grande, fonte)
+                glWindowPos2d((LARGURA - w) // 2, 40)
+                glDrawPixels(w, h, GL_RGBA, GL_UNSIGNED_BYTE, dados)
         glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST); glEnable(GL_LIGHTING); glEnable(GL_FOG)
 
         glfw.swap_buffers(janela)          # double buffering: mostra o quadro pronto
