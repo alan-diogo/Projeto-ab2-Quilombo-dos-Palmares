@@ -53,6 +53,7 @@ Ao completar tudo aparece "Missão cumprida" com o tempo gasto.
 | **E** (ao pé da escada da atalaia) | Subir / descer da torre de vigia |
 | **F** (perto do poço) | Descer o balde (ele enche na água e sobe sozinho); com o balde cheio, **F** despeja |
 | **L** (perto da fogueira) | Acender / apagar a fogueira (liga a luz pontual) |
+| **H** (fogueira acesa, à noite) | Ouvir as histórias do Quilombo dos Palmares (H passa para a próxima) |
 | **N** | Dia / noite |
 | **P** | Projeção perspectiva ↔ ortográfica (vista de mapa) |
 | **ESC** | Sair |
@@ -78,5 +79,6 @@ Ao completar tudo aparece "Missão cumprida" com o tempo gasto.
 main.py         câmera, iluminação, interações e laço principal
 objetos.py      modelagem de cada objeto (primitivas + transformações)
 primitivas.py   cilindro, esfera, disco, caixa, texturas e materiais
+historias.py    textos das histórias contadas na fogueira
 texturas/       imagens das texturas
 ```
