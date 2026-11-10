@@ -25,6 +25,10 @@ from primitivas import textura, PASTA
 
 LARGURA, ALTURA = 1280, 720
 ALTURA_OLHOS = 1.7
+# No macOS Retina o framebuffer tem mais pixels que a janela (ex.: 2×).
+# UI_SCALE / FB_* são preenchidos ao abrir a janela e usados no HUD.
+UI_SCALE = 1.0
+FB_W, FB_H = LARGURA, ALTURA
 
 # ---------------------------------------------------------------------
 # DISPOSIÇÃO DA CENA (x, z) — o portão fica em +Z, a Muxima no fundo (-Z)
@@ -155,17 +159,34 @@ _cache_txt = {}
 
 
 def carregar_fonte(tamanho, negrito=False):
-    nomes = (["arialbd.ttf", "DejaVuSans-Bold.ttf"] if negrito else []) + ["arial.ttf", "DejaVuSans.ttf"]
+    """Carrega TTF do sistema. No Mac, 'arial.ttf' minúsculo falha e caía no bitmap minúsculo do Pillow."""
+    if negrito:
+        nomes = [
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/Library/Fonts/Arial Bold.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "Arial Bold.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf",
+        ]
+    else:
+        nomes = [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "Arial.ttf", "arial.ttf", "DejaVuSans.ttf",
+        ]
     for nome in nomes:
         try:
             return ImageFont.truetype(nome, tamanho)
         except OSError:
-            pass
+            continue
     return ImageFont.load_default()
 
 
 def texto(x, y, s, fonte, cor=(255, 255, 255)):
-    chave = (s, cor, id(fonte))
+    """x, y em coordenadas da janela lógica (1280×720). Converte pro framebuffer (Retina)."""
+    chave = (s, cor, id(fonte), UI_SCALE)
     if chave not in _cache_txt:
         x0, y0, x1, y1 = fonte.getbbox(s)
         img = Image.new("RGBA", (x1 + 4, y1 + 6), (0, 0, 0, 0))
@@ -177,7 +198,8 @@ def texto(x, y, s, fonte, cor=(255, 255, 255)):
         if len(_cache_txt) > 200:
             _cache_txt.clear()
     dados, w, h = _cache_txt[chave]
-    glWindowPos2d(x, ALTURA - y - h)
+    # glWindowPos / glDrawPixels usam pixels do framebuffer (2× no Retina)
+    glWindowPos2d(x * UI_SCALE, FB_H - y * UI_SCALE - h)
     glDrawPixels(w, h, GL_RGBA, GL_UNSIGNED_BYTE, dados)
 
 
@@ -200,25 +222,29 @@ def quebrar_linhas(s, fonte, largura):
 
 def painel_historia(i, fonte_titulo, fonte):
     """Monta (uma vez só) a imagem do painel da história i: caixa escura, título e texto."""
-    if i not in _cache_painel:
+    chave = (i, UI_SCALE)
+    if chave not in _cache_painel:
         titulo, corpo = HISTORIAS[i][0], HISTORIAS[i][1]
         tipo = HISTORIAS[i][2]                                              # História, Lenda ou Folclore
-        W = 760
-        linhas = quebrar_linhas(corpo, fonte, W - 60)
-        H = 110 + len(linhas) * 26
+        s = UI_SCALE
+        W = int(760 * s)
+        pad, lh = int(30 * s), int(26 * s)
+        linhas = quebrar_linhas(corpo, fonte, W - 2 * pad)
+        H = int(110 * s) + len(linhas) * lh
         img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        d.rounded_rectangle([0, 0, W - 1, H - 1], radius=14, fill=(20, 12, 6, 215), outline=(230, 170, 80, 255), width=2)
+        d.rounded_rectangle([0, 0, W - 1, H - 1], radius=max(8, int(14 * s)),
+                            fill=(20, 12, 6, 215), outline=(230, 170, 80, 255), width=max(2, int(2 * s)))
         cor_titulo = (255, 210, 120, 255) if tipo == "História" else (170, 210, 255, 255)
-        d.text((30, 18), tipo + "  ·  " + titulo, font=fonte_titulo, fill=cor_titulo)
-        for k, s in enumerate(linhas):
-            d.text((30, 58 + k * 26), s, font=fonte, fill=(245, 235, 215, 255))
+        d.text((pad, int(18 * s)), tipo + "  ·  " + titulo, font=fonte_titulo, fill=cor_titulo)
+        for k, linha in enumerate(linhas):
+            d.text((pad, int(58 * s) + k * lh), linha, font=fonte, fill=(245, 235, 215, 255))
         rodape = "H: próxima história   (%d/%d)" % (i + 1, len(HISTORIAS)) if i + 1 < len(HISTORIAS) \
             else "H: fechar   (%d/%d)" % (i + 1, len(HISTORIAS))
-        d.text((30, H - 36), rodape, font=fonte, fill=(200, 180, 140, 255))
+        d.text((pad, H - int(36 * s)), rodape, font=fonte, fill=(200, 180, 140, 255))
         img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        _cache_painel[i] = (img.tobytes(), W, H)
-    return _cache_painel[i]
+        _cache_painel[chave] = (img.tobytes(), W, H)
+    return _cache_painel[chave]
 
 
 _ilustracoes = {}
@@ -423,6 +449,13 @@ def main():
     glfw.make_context_current(janela)
     glfw.swap_interval(1)                       # sincroniza com o monitor (~60 quadros/s)
 
+    # Retina / HiDPI: framebuffer pode ser 2× a janela; o HUD precisa desenhar nesse tamanho
+    global UI_SCALE, FB_W, FB_H
+    ww, wh = glfw.get_window_size(janela)
+    FB_W, FB_H = glfw.get_framebuffer_size(janela)
+    UI_SCALE = FB_W / float(ww) if ww else 1.0
+    glViewport(0, 0, FB_W, FB_H)
+
     # Teclado e mouse chegam por CALLBACKS: o GLFW chama essas funções a cada evento,
     # e elas guardam o evento numa fila que o laço principal processa.
     eventos = []
@@ -437,8 +470,9 @@ def main():
         mouse_ant[0] = (mx, my)
     glfw.set_cursor_pos_callback(janela, mouse_moveu)
 
-    fonte = carregar_fonte(18)
-    fonte_grande = carregar_fonte(22, negrito=True)
+    # Tamanhos lógicos um pouco maiores (bom pra vídeo); × UI_SCALE no Retina
+    fonte = carregar_fonte(max(18, int(round(22 * UI_SCALE))))
+    fonte_grande = carregar_fonte(max(22, int(round(30 * UI_SCALE))), negrito=True)
     iniciar_gl()
     for nome in ("grama", "terra", "palha", "reboco", "casca", "madeira", "folhas", "pedra", "agua"):
         textura(nome)
@@ -779,8 +813,9 @@ def main():
                   "Projeção: %s   %s" % ("ORTOGRÁFICA (tamanho %d m)" % cam.tam_orto if cam.orto
                                           else "PERSPECTIVA (fov %d°)" % cam.fov,
                                           "Noite" if dia_alvo < 0.5 else "Dia")]
+        lh = 28  # espaçamento lógico das linhas do HUD
         for k, s in enumerate(linhas):
-            texto(16, 44 + k * 22, s, fonte)
+            texto(16, 48 + k * lh, s, fonte)
         aviso = ""
         if perto_portao and not cam.orto:
             aviso = "Aperte E para %s o portão" % ("fechar" if portao_alvo > 0 else "abrir")
@@ -799,14 +834,16 @@ def main():
                      "subindo": "Puxando o balde...", "em_cima_cheio": "Balde cheio! F para despejar",
                      "despejando": "Despejando..."}[poco_estado]
         if aviso:
-            texto(LARGURA // 2 - fonte_grande.getlength(aviso) // 2, ALTURA - 90, aviso, fonte_grande, (255, 240, 180))
+            # getlength já está em pixels da fonte (escalada); converter de volta pra coords lógicas
+            texto(LARGURA // 2 - fonte_grande.getlength(aviso) / (2 * UI_SCALE),
+                  ALTURA - 90, aviso, fonte_grande, (255, 240, 180))
         # lista de tarefas (canto direito)
-        texto(LARGURA - 400, 14, "Um dia no Quilombo", fonte_grande, (255, 225, 140))
+        texto(LARGURA - 420, 14, "Um dia no Quilombo", fonte_grande, (255, 225, 140))
         for k, s in enumerate(tarefas):
             if feito[k]:
-                texto(LARGURA - 400, 44 + k * 22, "[x] " + s, fonte, (150, 230, 150))
+                texto(LARGURA - 420, 48 + k * lh, "[x] " + s, fonte, (150, 230, 150))
             else:
-                texto(LARGURA - 400, 44 + k * 22, "[  ] " + s, fonte)
+                texto(LARGURA - 420, 48 + k * lh, "[  ] " + s, fonte)
         if t < 7 and not teste:
             texto(LARGURA // 2 - 260, ALTURA // 2 - 60, "Chegue ao quilombo e cumpra as tarefas do dia",
                   fonte_grande, (255, 240, 180))
@@ -820,25 +857,26 @@ def main():
                 desenhar_ilustracao(imagem)
                 n = len(HISTORIAS)
                 rodape = ("H: próxima   (%d/%d)" if historia + 1 < n else "H: fechar   (%d/%d)") % (historia + 1, n)
-                texto(LARGURA // 2 - fonte.getlength(rodape) // 2, ALTURA - 30, rodape, fonte, (255, 225, 160))
+                texto(LARGURA // 2 - fonte.getlength(rodape) / (2 * UI_SCALE),
+                      ALTURA - 30, rodape, fonte, (255, 225, 160))
             else:                                        # sem ilustração: painel de texto
                 dados, w, h = painel_historia(historia, fonte_grande, fonte)
-                glWindowPos2d((LARGURA - w) // 2, 40)
+                glWindowPos2d((FB_W - w) // 2, int(40 * UI_SCALE))
                 glDrawPixels(w, h, GL_RGBA, GL_UNSIGNED_BYTE, dados)
         glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST); glEnable(GL_LIGHTING); glEnable(GL_FOG)
 
         glfw.swap_buffers(janela)          # double buffering: mostra o quadro pronto
 
         if demo:                                    # grava cada quadro (depois vira vídeo com ffmpeg)
-            dados = glReadPixels(0, 0, LARGURA, ALTURA, GL_RGB, GL_UNSIGNED_BYTE)
-            img = Image.frombytes("RGB", (LARGURA, ALTURA), dados).transpose(Image.FLIP_TOP_BOTTOM)
+            dados = glReadPixels(0, 0, FB_W, FB_H, GL_RGB, GL_UNSIGNED_BYTE)
+            img = Image.frombytes("RGB", (FB_W, FB_H), dados).transpose(Image.FLIP_TOP_BOTTOM)
             img.save("demo_%05d.png" % int(round(t * 25)))
             if t > 51.5:
                 glfw.terminate(); return
 
         if teste:
-            dados = glReadPixels(0, 0, LARGURA, ALTURA, GL_RGB, GL_UNSIGNED_BYTE)
-            img = Image.frombytes("RGB", (LARGURA, ALTURA), dados).transpose(Image.FLIP_TOP_BOTTOM)
+            dados = glReadPixels(0, 0, FB_W, FB_H, GL_RGB, GL_UNSIGNED_BYTE)
+            img = Image.frombytes("RGB", (FB_W, FB_H), dados).transpose(Image.FLIP_TOP_BOTTOM)
             img.save("teste_%d.png" % quadro)
             quadro += 1
             if quadro >= len(quadros_teste):
